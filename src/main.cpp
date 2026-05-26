@@ -378,6 +378,8 @@ void handleHttpRoot() {
     }
   }
   page += F("</ul></div>"
+            "<footer style='text-align:center;color:var(--muted);font-size:0.8rem;"
+            "margin:24px 0 8px;'>&copy; 2026 Arry &middot; ESP8266 Modbus RTU Sensor</footer>"
             "<script>"
             "(function(){"
             "var busy=false;"
