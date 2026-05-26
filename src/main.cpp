@@ -2,6 +2,7 @@
 #include <Adafruit_SHT31.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <EEPROM.h>
 #include <Wire.h>
 
 // I2C wiring for the SHT3x. Update if different on your board.
@@ -9,7 +10,9 @@ constexpr uint8_t I2C_SDA_PIN = D2;
 constexpr uint8_t I2C_SCL_PIN = D1;
 
 // Modbus RTU configuration.
-constexpr uint8_t MODBUS_SLAVE_ID = 3;
+constexpr uint8_t MODBUS_SLAVE_ID_DEFAULT = 3;
+constexpr uint8_t MODBUS_SLAVE_ID_MIN = 1;
+constexpr uint8_t MODBUS_SLAVE_ID_MAX = 247;
 constexpr uint32_t MODBUS_BAUDRATE = 9600;
 constexpr uint32_t SENSOR_POLL_INTERVAL_MS = 1000;
 constexpr uint32_t MODBUS_FRAME_GAP_US = 4000;  // >3.5 chars @ 9600 baud
@@ -20,6 +23,12 @@ constexpr char WIFI_AP_SSID[] = "WemosModbusAP";
 constexpr char WIFI_AP_PASSWORD[] = "modbus123";
 constexpr size_t LOG_BUFFER_SIZE = 32;
 constexpr size_t LOG_MESSAGE_MAX = 96;
+
+// EEPROM layout for persistent settings.
+constexpr size_t EEPROM_SIZE = 16;
+constexpr int EEPROM_ADDR_MAGIC = 0;     // 2 bytes
+constexpr int EEPROM_ADDR_SLAVE_ID = 2;  // 1 byte
+constexpr uint16_t EEPROM_MAGIC = 0xCAFE;
 
 // Holding register map.
 constexpr uint16_t REG_TEMPERATURE = 0x0000;  // signed 0.1 °C
@@ -33,6 +42,7 @@ uint16_t holdingRegisters[HOLDING_REGISTER_COUNT] = {0};
 float lastTemperature = NAN;
 float lastHumidity = NAN;
 uint8_t sensorStatus = 1;  // 0 = ok, 1 = init error, 2 = read error
+uint8_t modbusSlaveId = MODBUS_SLAVE_ID_DEFAULT;
 
 void handleModbusInput();
 void processModbusFrame(const uint8_t* frame, size_t length);
@@ -43,6 +53,9 @@ void logSensorMessage(const char* message);
 void logSensorReading(float temperatureC, float humidity);
 void appendLog(const char* message);
 void handleHttpRoot();
+void handleHttpSaveSlaveId();
+void loadSlaveIdFromEeprom();
+bool saveSlaveIdToEeprom(uint8_t newId);
 String formatFloat(float value, const char* unit);
 const char* sensorStatusText(uint8_t status);
 
@@ -90,6 +103,12 @@ void setup() {
     logSensorMessage("Sensor logger started");
   }
 
+  EEPROM.begin(EEPROM_SIZE);
+  loadSlaveIdFromEeprom();
+  char slaveMsg[48];
+  snprintf(slaveMsg, sizeof(slaveMsg), "Modbus slave ID = %u", modbusSlaveId);
+  logSensorMessage(slaveMsg);
+
   Serial.begin(MODBUS_BAUDRATE, SERIAL_8N1);
   if (sensorOnline) {
     sensorStatus = 0;
@@ -108,6 +127,7 @@ void setup() {
   logSensorMessage(ipMessage);
 
   webServer.on("/", handleHttpRoot);
+  webServer.on("/save-slave-id", HTTP_POST, handleHttpSaveSlaveId);
   webServer.begin();
 }
 
@@ -189,7 +209,7 @@ void processModbusFrame(const uint8_t* frame, size_t length) {
     return;
   }
 
-  if (frame[0] != MODBUS_SLAVE_ID) {
+  if (frame[0] != modbusSlaveId) {
     return;
   }
 
@@ -221,7 +241,7 @@ void processModbusFrame(const uint8_t* frame, size_t length) {
 void sendHoldingRegisters(uint16_t startAddress, uint16_t count, uint8_t function) {
   const uint8_t byteCount = static_cast<uint8_t>(count * 2);
   uint8_t response[3 + 2 * HOLDING_REGISTER_COUNT + 2];
-  response[0] = MODBUS_SLAVE_ID;
+  response[0] = modbusSlaveId;
   response[1] = function;
   response[2] = byteCount;
 
@@ -240,7 +260,7 @@ void sendHoldingRegisters(uint16_t startAddress, uint16_t count, uint8_t functio
 
 void sendModbusException(uint8_t function, uint8_t exceptionCode) {
   uint8_t response[5];
-  response[0] = MODBUS_SLAVE_ID;
+  response[0] = modbusSlaveId;
   response[1] = function | 0x80;
   response[2] = exceptionCode;
   const uint16_t crc = modbusCRC(response, 3);
@@ -330,12 +350,24 @@ void handleHttpRoot() {
 
   page += F("<div class='card'><h2>Modbus Configuration</h2>"
             "<div class='grid'>");
-  page += "<div><div class='label'>Slave ID</div><div class='metric'>" + String(MODBUS_SLAVE_ID) + "</div></div>";
+  page += "<div><div class='label'>Slave ID</div><div class='metric'>" + String(modbusSlaveId) + "</div></div>";
   page += "<div><div class='label'>Baud Rate</div><div class='metric'>" + String(MODBUS_BAUDRATE) + "</div></div>";
   page += "<div><div class='label'>Frame</div><div>8 data bits, 1 stop, no parity</div></div>";
   page += "<div><div class='label'>Register Scaling</div><div>Tenth units (289 = 28.9)</div></div>";
   page += "<div><div class='label'>Registers Used</div><div>0: Temp, 1: Humidity</div></div>";
-  page += "</div></div>";
+  page += "</div>";
+
+  page += F("<form method='POST' action='/save-slave-id' "
+            "style='margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;'>"
+            "<label class='label' for='sid'>Set Slave ID (1-247)</label>"
+            "<input id='sid' name='slave_id' type='number' min='1' max='247' required "
+            "value='");
+  page += String(modbusSlaveId);
+  page += F("' style='padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.3);"
+            "background:#0f172a;color:var(--text);width:100px;'>"
+            "<button type='submit' style='padding:8px 16px;border-radius:8px;border:0;"
+            "background:var(--accent);color:#0f172a;font-weight:600;cursor:pointer;'>"
+            "Save to Flash</button></form></div>");
 
   page += F("<div class='card'><h2>Recent Logs</h2><ul>");
   if (logEntryCount == 0) {
@@ -370,4 +402,65 @@ const char* sensorStatusText(uint8_t status) {
     default:
       return "Unknown";
   }
+}
+
+void loadSlaveIdFromEeprom() {
+  const uint16_t magic = (static_cast<uint16_t>(EEPROM.read(EEPROM_ADDR_MAGIC)) << 8) |
+                         EEPROM.read(EEPROM_ADDR_MAGIC + 1);
+  if (magic != EEPROM_MAGIC) {
+    modbusSlaveId = MODBUS_SLAVE_ID_DEFAULT;
+    logSensorMessage("EEPROM empty, using default slave ID");
+    return;
+  }
+
+  const uint8_t stored = EEPROM.read(EEPROM_ADDR_SLAVE_ID);
+  if (stored < MODBUS_SLAVE_ID_MIN || stored > MODBUS_SLAVE_ID_MAX) {
+    modbusSlaveId = MODBUS_SLAVE_ID_DEFAULT;
+    logSensorMessage("EEPROM slave ID out of range, using default");
+    return;
+  }
+
+  modbusSlaveId = stored;
+}
+
+bool saveSlaveIdToEeprom(uint8_t newId) {
+  if (newId < MODBUS_SLAVE_ID_MIN || newId > MODBUS_SLAVE_ID_MAX) {
+    return false;
+  }
+
+  EEPROM.write(EEPROM_ADDR_MAGIC, static_cast<uint8_t>(EEPROM_MAGIC >> 8));
+  EEPROM.write(EEPROM_ADDR_MAGIC + 1, static_cast<uint8_t>(EEPROM_MAGIC & 0xFF));
+  EEPROM.write(EEPROM_ADDR_SLAVE_ID, newId);
+  if (!EEPROM.commit()) {
+    return false;
+  }
+
+  modbusSlaveId = newId;
+  return true;
+}
+
+void handleHttpSaveSlaveId() {
+  if (!webServer.hasArg("slave_id")) {
+    webServer.send(400, "text/plain", "Missing slave_id");
+    return;
+  }
+
+  const long parsed = webServer.arg("slave_id").toInt();
+  if (parsed < MODBUS_SLAVE_ID_MIN || parsed > MODBUS_SLAVE_ID_MAX) {
+    webServer.send(400, "text/plain", "Slave ID must be 1-247");
+    return;
+  }
+
+  const uint8_t newId = static_cast<uint8_t>(parsed);
+  if (!saveSlaveIdToEeprom(newId)) {
+    webServer.send(500, "text/plain", "Failed to write EEPROM");
+    return;
+  }
+
+  char msg[48];
+  snprintf(msg, sizeof(msg), "Slave ID saved to flash: %u", newId);
+  logSensorMessage(msg);
+
+  webServer.sendHeader("Location", "/", true);
+  webServer.send(303, "text/plain", "Saved");
 }
