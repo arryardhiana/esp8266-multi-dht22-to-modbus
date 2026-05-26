@@ -317,7 +317,6 @@ void appendLog(const char* message) {
 void handleHttpRoot() {
   String page = F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
                   "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                  "<meta http-equiv='refresh' content='5'>"
                   "<title>Wemos D1 Modbus Sensor</title>"
                   "<style>"
                   ":root{color-scheme:dark;--bg:#0f172a;--card:#1e293b;--accent:#38bdf8;"
@@ -378,7 +377,18 @@ void handleHttpRoot() {
       page += "<li>" + String(logBuffer[index]) + "</li>";
     }
   }
-  page += F("</ul></div></body></html>");
+  page += F("</ul></div>"
+            "<script>"
+            "(function(){"
+            "var busy=false;"
+            "document.addEventListener('focusin',function(e){"
+            "if(e.target.matches('input,button,select,textarea'))busy=true;"
+            "});"
+            "document.addEventListener('focusout',function(){busy=false;});"
+            "setInterval(function(){if(!busy)location.reload();},5000);"
+            "})();"
+            "</script>"
+            "</body></html>");
   webServer.send(200, "text/html", page);
 }
 
