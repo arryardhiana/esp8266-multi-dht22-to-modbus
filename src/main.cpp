@@ -489,8 +489,9 @@ void handleHttpRoot() {
   if (logEntryCount == 0) {
     page += F("<li>No log entries yet</li>");
   } else {
+    // Tampilkan dari terbaru ke terlama: entri terbaru ada di (logNextIndex - 1).
     for (size_t i = 0; i < logEntryCount; ++i) {
-      size_t index = (logNextIndex + LOG_BUFFER_SIZE - logEntryCount + i) % LOG_BUFFER_SIZE;
+      size_t index = (logNextIndex + LOG_BUFFER_SIZE - 1 - i) % LOG_BUFFER_SIZE;
       page += "<li>" + String(logBuffer[index]) + "</li>";
     }
   }
