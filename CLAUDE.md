@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-PlatformIO/Arduino firmware for a **Wemos D1 Mini** (ESP8266, `d1_mini` board) that reads **two DHT22 temperature/humidity sensors** over single-wire protocol and exposes the readings as a **Modbus RTU slave** over RS485. It also displays live readings on an **OLED SSD1306** display and brings up a WiFi access point with a small HTML dashboard for diagnostics.
+PlatformIO/Arduino firmware for a **Wemos D1 Mini** (ESP8266, `d1_mini` board) that reads **two DHT22 temperature/humidity sensors** over single-wire protocol and exposes the readings as a **Modbus RTU slave** over the **hardware UART (`Serial`, GPIO1/GPIO3)** driving an RS485 transceiver. It also displays live readings on an **OLED SSD1306** display and brings up a WiFi access point with a small HTML dashboard for diagnostics.
 
 All firmware lives in a single translation unit: [src/main.cpp](src/main.cpp). `include/`, `lib/`, and `test/` exist as PlatformIO scaffolding but contain only the default READMEs — there are no headers, libraries, or tests yet.
 
@@ -18,18 +18,19 @@ All firmware lives in a single translation unit: [src/main.cpp](src/main.cpp). `
 | Sensor #1      | DHT22 module — D5 (GPIO14), kabel UTP 20m     |
 | Sensor #2      | DHT22 module — D6 (GPIO12), kabel UTP 20m     |
 | Display        | OLED SSD1306 128×64 — I2C (D1/D2)            |
-| Komunikasi     | Modul RS485 4-pin (+, −, RX, TX) — auto DE/RE |
+| Komunikasi     | Modul RS485 ke hardware Serial (GPIO1/GPIO3)  |
 | Kabel sensor   | UTP Cat6 20m dengan RJ45 keystone jack        |
 
 ### Pin Map
 
 ```
+GPIO1 (TX0)  → RS485 driver DI  (Serial TX, Modbus)
+GPIO3 (RX0)  → RS485 driver RO  (Serial RX, Modbus)
+GPIO2 (TX1)  → debug log        (Serial1, 115200, TX-only)
 D1  (GPIO5)  → OLED SCL  (I2C)
 D2  (GPIO4)  → OLED SDA  (I2C)
 D5  (GPIO14) → DHT22 #1 DATA  (via voltage divider)
 D6  (GPIO12) → DHT22 #2 DATA  (via voltage divider)
-D7  (GPIO13) → RS485 modul RX  (SoftwareSerial TX)
-D8  (GPIO15) → RS485 modul TX  (SoftwareSerial RX)
 3.3V         → VCC OLED
 5V           → VCC DHT22, VCC RS485, pull-up 560Ω
 GND          → semua komponen
@@ -69,7 +70,7 @@ lib_deps =
     adafruit/Adafruit GFX Library
 ```
 
-`ESP8266WiFi`, `ESP8266WebServer`, `Wire`, dan `SoftwareSerial` ditarik otomatis dari platform espressif8266.
+`ESP8266WiFi`, `ESP8266WebServer`, dan `Wire` ditarik otomatis dari platform espressif8266.
 
 ---
 
@@ -79,11 +80,10 @@ lib_deps =
 
 ESP8266 punya dua UART, dibagi secara sengaja:
 
-- **`Serial`** (GPIO1 TX / GPIO3 RX, 9600 8N1) — **TIDAK DIPAKAI untuk RS485** di project ini. RS485 menggunakan SoftwareSerial di D7/D8. `Serial` hanya untuk Modbus jika arsitektur berubah ke hardware serial — jangan tambahkan `Serial.print` debug tanpa sadar.
+- **`Serial`** (GPIO1 TX / GPIO3 RX, 9600 8N1) — **jalur Modbus RTU** ke driver RS485. **Jangan** tambahkan `Serial.print` debug di mana pun — byte-nya akan diinterpretasi sebagai frame Modbus oleh master. USB-serial bridge Wemos juga tersambung ke `Serial`, jadi monitor USB tidak bisa dipakai bersamaan dengan Modbus.
 - **`Serial1`** (GPIO2, TX-only, 115200) — **diagnostic channel**, gated oleh `ENABLE_SENSOR_SERIAL_LOG`. Semua logging lewat `logSensorMessage` / `logSensorReading`, yang menulis ke `Serial1` dan ke in-memory ring buffer untuk web dashboard.
-- **`rs485Serial`** — `SoftwareSerial(D8, D7)` di 9600 baud. Ini jalur Modbus RTU ke bus RS485.
 
-### Modbus RTU — RS485
+### Modbus RTU — hardware Serial → RS485
 
 Frame boundary dideteksi via inter-byte gap: `MODBUS_FRAME_GAP_US = 4000` (>3.5 character times at 9600 baud, sesuai spec Modbus RTU). `handleModbusInput` akumulasi byte ke static buffer, panggil `processModbusFrame` setelah gap berlalu.
 
@@ -167,8 +167,8 @@ Device berjalan sebagai SoftAP only (`WemosModbusAP` / `modbus123`, lihat konsta
 
 ## Conventions for changes
 
-- **Serial1 untuk debug** — semua output diagnostik lewat `logSensorMessage` (ring buffer + Serial1). Jangan tambah `Serial.print` langsung.
-- **SoftwareSerial untuk RS485** — jangan pindahkan ke hardware Serial kecuali ada perubahan arsitektur yang disengaja.
+- **Serial1 untuk debug** — semua output diagnostik lewat `logSensorMessage` (ring buffer + Serial1). Jangan tambah `Serial.print` langsung; `Serial` direservasi untuk Modbus RTU.
+- **Modbus di hardware `Serial`** (GPIO1/GPIO3) → driver RS485. Jangan pindah balik ke SoftwareSerial kecuali ada perubahan arsitektur yang disengaja.
 - **Holding registers** — jika menambah register, bump `HOLDING_REGISTER_COUNT` dan letakkan setelah reserved range agar address map tetap stabil.
 - **Pin assignments dan protocol constants** — semua `constexpr` di bagian atas `main.cpp`. Edit di sana, bukan magic number di body.
 - **Komentar dalam Bahasa Indonesia**.

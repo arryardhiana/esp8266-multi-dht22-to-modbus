@@ -3,7 +3,6 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <EEPROM.h>
-#include <SoftwareSerial.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -14,9 +13,9 @@
 constexpr uint8_t DHTPIN1 = D5;        // GPIO14 - DATA DHT22 #1
 constexpr uint8_t DHTPIN2 = D6;        // GPIO12 - DATA DHT22 #2
 constexpr uint8_t DHTTYPE = DHT22;
-constexpr uint8_t RS485_RX_PIN = D8;   // GPIO15 - SoftwareSerial RX <- RS485 TX
-constexpr uint8_t RS485_TX_PIN = D7;   // GPIO13 - SoftwareSerial TX -> RS485 RX
+// Modbus RTU di hardware Serial: GPIO1 (TX0) -> RS485 driver DI, GPIO3 (RX0) <- RO.
 // OLED dipasang di I2C default: SDA=D2 (GPIO4), SCL=D1 (GPIO5).
+// Debug log di Serial1 (GPIO2, TX-only).
 
 // ---------------------------------------------------------------------------
 // Modbus RTU (di atas RS485 via SoftwareSerial).
@@ -80,7 +79,6 @@ constexpr uint16_t HOLDING_REGISTER_COUNT = 20;
 // ---------------------------------------------------------------------------
 DHT dht1(DHTPIN1, DHTTYPE);
 DHT dht2(DHTPIN2, DHTTYPE);
-SoftwareSerial rs485Serial(RS485_RX_PIN, RS485_TX_PIN);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 ESP8266WebServer webServer(80);
 
@@ -165,8 +163,8 @@ void setup() {
   dht2.begin();
   logSensorMessage("DHT22 x2 initialized");
 
-  rs485Serial.begin(MODBUS_BAUDRATE);  // SoftwareSerial 8N1
-  logSensorMessage("RS485 (SoftwareSerial) up @9600");
+  Serial.begin(MODBUS_BAUDRATE, SERIAL_8N1);  // hardware UART0 -> RS485 driver
+  logSensorMessage("Modbus on hardware Serial @9600");
 
   oledOnline = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);
   if (oledOnline) {
@@ -288,8 +286,8 @@ void handleModbusInput() {
   static size_t rxLength = 0;
   static uint32_t lastByteMicros = 0;
 
-  while (rs485Serial.available()) {
-    const int byteRead = rs485Serial.read();
+  while (Serial.available()) {
+    const int byteRead = Serial.read();
     if (byteRead < 0) {
       break;
     }
@@ -366,7 +364,7 @@ void sendHoldingRegisters(uint16_t startAddress, uint16_t count, uint8_t functio
   response[3 + byteCount] = static_cast<uint8_t>(crc & 0xFF);
   response[4 + byteCount] = static_cast<uint8_t>(crc >> 8);
 
-  rs485Serial.write(response, 5 + byteCount);
+  Serial.write(response, 5 + byteCount);
 }
 
 void sendModbusException(uint8_t function, uint8_t exceptionCode) {
@@ -377,7 +375,7 @@ void sendModbusException(uint8_t function, uint8_t exceptionCode) {
   const uint16_t crc = modbusCRC(response, 3);
   response[3] = static_cast<uint8_t>(crc & 0xFF);
   response[4] = static_cast<uint8_t>(crc >> 8);
-  rs485Serial.write(response, sizeof(response));
+  Serial.write(response, sizeof(response));
 }
 
 uint16_t modbusCRC(const uint8_t* data, size_t length) {
@@ -469,7 +467,7 @@ void handleHttpRoot() {
             "<div class='grid'>");
   page += "<div><div class='label'>Slave ID</div><div class='metric'>" + String(modbusSlaveId) + "</div></div>";
   page += "<div><div class='label'>Baud Rate</div><div class='metric'>" + String(MODBUS_BAUDRATE) + "</div></div>";
-  page += "<div><div class='label'>Transport</div><div>RS485 (SoftwareSerial D7/D8)</div></div>";
+  page += "<div><div class='label'>Transport</div><div>Hardware Serial (GPIO1/3) → RS485</div></div>";
   page += "<div><div class='label'>Frame</div><div>8 data bits, 1 stop, no parity</div></div>";
   page += "<div><div class='label'>Register Scaling</div><div>Tenth units (289 = 28.9)</div></div>";
   page += "<div><div class='label'>Registers Used</div><div>0:T1 1:H1 2:T2 3:H2 4:St1 5:St2</div></div>";
