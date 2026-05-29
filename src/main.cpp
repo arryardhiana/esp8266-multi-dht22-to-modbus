@@ -10,7 +10,7 @@ constexpr uint8_t I2C_SDA_PIN = D2;
 constexpr uint8_t I2C_SCL_PIN = D1;
 
 // Modbus RTU configuration.
-constexpr uint8_t MODBUS_SLAVE_ID_DEFAULT = 3;
+constexpr uint8_t MODBUS_SLAVE_ID_DEFAULT = 10;
 constexpr uint8_t MODBUS_SLAVE_ID_MIN = 1;
 constexpr uint8_t MODBUS_SLAVE_ID_MAX = 247;
 constexpr uint32_t MODBUS_BAUDRATE = 9600;
