@@ -84,6 +84,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 ESP8266WebServer webServer(80);
 
 bool oledOnline = false;
+uint8_t oledAddress = 0;  // alamat I2C OLED aktif (0 = belum terdeteksi)
 uint32_t lastSensorSample = 0;
 uint16_t holdingRegisters[HOLDING_REGISTER_COUNT] = {0};
 float lastTemperature[2] = {NAN, NAN};
@@ -100,6 +101,7 @@ size_t logEntryCount = 0;
 void pollSensor(uint8_t index, DHT& dht);
 void updateHoldingRegisters();
 void scanI2cBus();
+bool i2cDevicePresent(uint8_t address);
 bool initOled();
 void updateOled();
 void handleModbusInput();
@@ -205,11 +207,22 @@ void loop() {
     pollSensor(1, dht2);
     updateHoldingRegisters();
 
-    if (!oledOnline) {
-      oledOnline = initOled();  // retry hot-plug
+    // Status OLED live: verifikasi keberadaan via ACK I2C tiap siklus, supaya
+    // cabut/colok saat runtime terdeteksi (bukan hanya saat boot).
+    const bool oledPresent =
+        oledOnline ? i2cDevicePresent(oledAddress)
+                   : (i2cDevicePresent(OLED_I2C_ADDRESS) ||
+                      i2cDevicePresent(OLED_I2C_ADDRESS_ALT));
+
+    if (oledPresent && !oledOnline) {
+      oledOnline = initOled();  // (re)init hot-plug
       if (oledOnline) {
-        logSensorMessage("OLED back online");
+        logSensorMessage("OLED terhubung");
       }
+    } else if (!oledPresent && oledOnline) {
+      oledOnline = false;
+      oledAddress = 0;
+      logSensorMessage("OLED terputus");
     }
     updateOled();
   }
@@ -259,12 +272,17 @@ void updateHoldingRegisters() {
   holdingRegisters[REG_STATUS2] = sensorStatus[1];
 }
 
+// True bila ada device I2C yang meng-ACK di alamat tsb.
+bool i2cDevicePresent(uint8_t address) {
+  Wire.beginTransmission(address);
+  return Wire.endTransmission() == 0;
+}
+
 // Scan bus I2C dan log tiap alamat yang merespons (untuk diagnosa OLED).
 void scanI2cBus() {
   uint8_t found = 0;
   for (uint8_t addr = 1; addr < 127; ++addr) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
+    if (i2cDevicePresent(addr)) {
       char message[24];
       snprintf(message, sizeof(message), "I2C device @0x%02X", addr);
       logSensorMessage(message);
@@ -276,15 +294,25 @@ void scanI2cBus() {
   }
 }
 
-// Coba init OLED di alamat primer lalu alternatif (0x3C / 0x3D).
+// Cek keberadaan OLED lewat ACK I2C lebih dulu (display.begin() tidak verifikasi
+// device, selalu sukses selama buffer teralokasi). Coba 0x3C lalu 0x3D.
 bool initOled() {
-  if (display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS) ||
-      display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS_ALT)) {
-    display.clearDisplay();
-    display.display();
-    return true;
+  uint8_t address = 0;
+  if (i2cDevicePresent(OLED_I2C_ADDRESS)) {
+    address = OLED_I2C_ADDRESS;
+  } else if (i2cDevicePresent(OLED_I2C_ADDRESS_ALT)) {
+    address = OLED_I2C_ADDRESS_ALT;
   }
-  return false;
+
+  if (address == 0 || !display.begin(SSD1306_SWITCHCAPVCC, address)) {
+    oledAddress = 0;
+    return false;
+  }
+
+  oledAddress = address;
+  display.clearDisplay();
+  display.display();
+  return true;
 }
 
 void updateOled() {
