@@ -496,6 +496,8 @@ void handleHttpRoot() {
           String(sensorStatusText(sensorStatus[0])) + "</div></div>";
   page += "<div><div class='label'>Sensor 2 Status</div><div>" +
           String(sensorStatusText(sensorStatus[1])) + "</div></div>";
+  page += "<div><div class='label'>Display OLED</div><div>" +
+          String(oledOnline ? "Terdeteksi" : "Tidak terdeteksi") + "</div></div>";
   page += "<div><div class='label'>Sample Interval</div><div>" +
           String(READ_INTERVAL / 1000.0f, 1) + " s</div></div>";
   page += "</div></div>";
