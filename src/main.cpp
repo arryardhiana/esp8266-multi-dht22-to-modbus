@@ -51,6 +51,7 @@ constexpr size_t LOG_MESSAGE_MAX = 96;
 // OLED SSD1306 128x64.
 // ---------------------------------------------------------------------------
 constexpr uint8_t OLED_I2C_ADDRESS = 0x3C;
+constexpr uint8_t OLED_I2C_ADDRESS_ALT = 0x3D;  // sebagian modul pakai 0x3D
 constexpr int16_t SCREEN_WIDTH = 128;
 constexpr int16_t SCREEN_HEIGHT = 64;
 constexpr int8_t OLED_RESET = -1;  // tanpa pin reset terpisah
@@ -98,6 +99,8 @@ size_t logEntryCount = 0;
 // Prototipe.
 void pollSensor(uint8_t index, DHT& dht);
 void updateHoldingRegisters();
+void scanI2cBus();
+bool initOled();
 void updateOled();
 void handleModbusInput();
 void processModbusFrame(const uint8_t* frame, size_t length);
@@ -166,11 +169,10 @@ void setup() {
   Serial.begin(MODBUS_BAUDRATE, SERIAL_8N1);  // hardware UART0 -> RS485 driver
   logSensorMessage("Modbus on hardware Serial @9600");
 
-  oledOnline = display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS);
+  scanI2cBus();  // log alamat I2C yang terdeteksi untuk diagnosa OLED
+  oledOnline = initOled();
   if (oledOnline) {
     logSensorMessage("OLED SSD1306 detected");
-    display.clearDisplay();
-    display.display();
   } else {
     logSensorMessage("OLED not detected, continuing without display");
   }
@@ -202,6 +204,13 @@ void loop() {
     pollSensor(0, dht1);
     pollSensor(1, dht2);
     updateHoldingRegisters();
+
+    if (!oledOnline) {
+      oledOnline = initOled();  // retry hot-plug
+      if (oledOnline) {
+        logSensorMessage("OLED back online");
+      }
+    }
     updateOled();
   }
 }
@@ -248,6 +257,34 @@ void updateHoldingRegisters() {
   holdingRegisters[REG_HUM2] = encodeUnsignedTenths(lastHumidity[1]);
   holdingRegisters[REG_STATUS1] = sensorStatus[0];
   holdingRegisters[REG_STATUS2] = sensorStatus[1];
+}
+
+// Scan bus I2C dan log tiap alamat yang merespons (untuk diagnosa OLED).
+void scanI2cBus() {
+  uint8_t found = 0;
+  for (uint8_t addr = 1; addr < 127; ++addr) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      char message[24];
+      snprintf(message, sizeof(message), "I2C device @0x%02X", addr);
+      logSensorMessage(message);
+      ++found;
+    }
+  }
+  if (found == 0) {
+    logSensorMessage("I2C: tidak ada device (cek wiring SDA D2/SCL D1)");
+  }
+}
+
+// Coba init OLED di alamat primer lalu alternatif (0x3C / 0x3D).
+bool initOled() {
+  if (display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS) ||
+      display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDRESS_ALT)) {
+    display.clearDisplay();
+    display.display();
+    return true;
+  }
+  return false;
 }
 
 void updateOled() {
