@@ -17,6 +17,10 @@ constexpr uint32_t MODBUS_BAUDRATE = 9600;
 constexpr uint32_t MODBUS_FRAME_GAP_US = 4000;  // >3.5 char @ 9600 baud
 constexpr size_t MODBUS_RX_BUFFER_SIZE = 64;
 constexpr bool ENABLE_MODBUS_RX_LOG = true;
+// Tes arah TX: kirim teks "HB:<detik>" ke bus RS485 tiap 2 dtk. Hubungkan ujung
+// bus ke PC (USB-RS485) buka serial terminal 9600 8N1: kalau "HB:n" muncul ->
+// jalur ESP TX -> modul -> bus sehat. Set false untuk operasi normal.
+constexpr bool ENABLE_TX_HEARTBEAT = false;
 
 // --- Debug / WiFi ---
 constexpr bool ENABLE_SERIAL_LOG = true;
@@ -99,6 +103,19 @@ void loop() {
   webServer.handleClient();
 
   const uint32_t now = millis();
+
+  if (ENABLE_TX_HEARTBEAT) {
+    static uint32_t lastHeartbeat = 0;
+    if (now - lastHeartbeat >= 2000) {
+      lastHeartbeat = now;
+      char hb[24];
+      int n = snprintf(hb, sizeof(hb), "HB:%lu\r\n",
+                       static_cast<unsigned long>(now / 1000));
+      Serial.write(reinterpret_cast<const uint8_t*>(hb), n);
+      logMessage("TX heartbeat dikirim");
+    }
+  }
+
   if (now - lastMockUpdate >= MOCK_UPDATE_INTERVAL_MS) {
     lastMockUpdate = now;
     updateMockRegisters();
