@@ -86,6 +86,7 @@ ESP8266WebServer webServer(80);
 
 bool oledOnline = false;
 uint8_t oledAddress = 0;  // alamat I2C OLED aktif (0 = belum terdeteksi)
+uint32_t modbusRxByteCount = 0;  // total byte mentah diterima di Serial RX (diagnosa)
 uint32_t lastSensorSample = 0;
 uint16_t holdingRegisters[HOLDING_REGISTER_COUNT] = {0};
 float lastTemperature[2] = {NAN, NAN};
@@ -358,6 +359,7 @@ void handleModbusInput() {
       break;
     }
 
+    ++modbusRxByteCount;
     if (rxLength < sizeof(rxBuffer)) {
       rxBuffer[rxLength++] = static_cast<uint8_t>(byteRead);
     }
@@ -562,6 +564,7 @@ void handleHttpRoot() {
   page += "<div><div class='label'>Frame</div><div>8 data bits, 1 stop, no parity</div></div>";
   page += "<div><div class='label'>Register Scaling</div><div>Tenth units (289 = 28.9)</div></div>";
   page += "<div><div class='label'>Registers Used</div><div>0:T1 1:H1 2:T2 3:H2 4:St1 5:St2</div></div>";
+  page += "<div><div class='label'>RX Bytes (GPIO3)</div><div class='metric'>" + String(modbusRxByteCount) + "</div></div>";
   page += "</div>";
 
   page += F("<form method='POST' action='/save-slave-id' "
