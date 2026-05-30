@@ -26,6 +26,7 @@ constexpr uint8_t MODBUS_SLAVE_ID_MAX = 247;
 constexpr uint32_t MODBUS_BAUDRATE = 9600;
 constexpr uint32_t MODBUS_FRAME_GAP_US = 4000;  // >3.5 char @ 9600 baud
 constexpr size_t MODBUS_RX_BUFFER_SIZE = 64;
+constexpr bool ENABLE_MODBUS_RX_LOG = true;  // log frame masuk ke dashboard (diagnosa)
 
 // ---------------------------------------------------------------------------
 // Sensor poll.
@@ -377,17 +378,40 @@ void handleModbusInput() {
 
 void processModbusFrame(const uint8_t* frame, size_t length) {
   if (length < 8) {
+    if (ENABLE_MODBUS_RX_LOG) {
+      char message[40];
+      snprintf(message, sizeof(message), "MB rx frame pendek (len=%u)",
+               static_cast<unsigned>(length));
+      logSensorMessage(message);
+    }
     return;
   }
 
   const uint16_t crcReceived = static_cast<uint16_t>(frame[length - 2]) |
                                (static_cast<uint16_t>(frame[length - 1]) << 8);
   const uint16_t crcCalculated = modbusCRC(frame, length - 2);
+
+  if (ENABLE_MODBUS_RX_LOG) {
+    char message[64];
+    snprintf(message, sizeof(message), "MB rx id=%u fn=0x%02X len=%u crc=%s",
+             static_cast<unsigned>(frame[0]), static_cast<unsigned>(frame[1]),
+             static_cast<unsigned>(length),
+             crcReceived == crcCalculated ? "OK" : "BAD");
+    logSensorMessage(message);
+  }
+
   if (crcReceived != crcCalculated) {
     return;
   }
 
   if (frame[0] != modbusSlaveId) {
+    if (ENABLE_MODBUS_RX_LOG) {
+      char message[48];
+      snprintf(message, sizeof(message), "MB id %u != slave %u, diabaikan",
+               static_cast<unsigned>(frame[0]),
+               static_cast<unsigned>(modbusSlaveId));
+      logSensorMessage(message);
+    }
     return;
   }
 
