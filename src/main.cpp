@@ -27,6 +27,10 @@ constexpr uint32_t MODBUS_BAUDRATE = 9600;
 constexpr uint32_t MODBUS_FRAME_GAP_US = 4000;  // >3.5 char @ 9600 baud
 constexpr size_t MODBUS_RX_BUFFER_SIZE = 64;
 constexpr bool ENABLE_MODBUS_RX_LOG = true;  // log frame masuk ke dashboard (diagnosa)
+// Self-test UART: kirim byte uji ke TX (GPIO1) tiap 2 dtk. Lepas modul RS485,
+// jumper GPIO1<->GPIO3, set true & flash: kalau RX Bytes naik -> UART RX ESP sehat,
+// masalah murni di modul/kabel/ground. Kembalikan ke false untuk operasi normal.
+constexpr bool ENABLE_UART_LOOPBACK_TEST = false;
 
 // ---------------------------------------------------------------------------
 // Sensor poll.
@@ -202,6 +206,16 @@ void loop() {
   webServer.handleClient();
 
   const uint32_t now = millis();
+
+  if (ENABLE_UART_LOOPBACK_TEST) {
+    static uint32_t lastLoopbackMs = 0;
+    if (now - lastLoopbackMs >= 2000) {
+      lastLoopbackMs = now;
+      Serial.write(0x55);  // jumper GPIO1->GPIO3 -> RX Bytes harus naik
+      logSensorMessage("loopback: kirim 0x55 ke TX (GPIO1)");
+    }
+  }
+
   if (now - lastSensorSample >= READ_INTERVAL) {
     lastSensorSample = now;
 
